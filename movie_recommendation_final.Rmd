@@ -1,0 +1,592 @@
+---
+title: "Movie Recommendation Algorithm"
+author: "Amichai David"
+date: "4/24/2020"
+output:
+  pdf_document: 
+    
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: kable
+
+---
+
+<style>
+body {
+text-align: justify}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+In this project I will create a data driven movie rating algorithm, as required for the final project of the course HarvardX: PH125.9x - Data Science: Capstone. The project will include several possible algorithms based on the course material and on additional recommended content. 
+The movielens data is a large dataset which includes rating data of movies and users. The goal of the project is to build a movie rating algorithm and evaluate it using Root Mean Square Error (RMSE). The project's target RMSE is  $RMSE < 0.8649$.
+
+In order to achieve the target RMSE a few strategies and approaches were considered and some of them implemented - Naive Mean Linear Model, Movie Effect, User Effect, Regularized Movie&User Effect and Matrix Factorization using recosystem. Matrix Factorization with recommendlab was also implemented but is not included in this final report due to very long processing time.
+
+The first section will explore the data briefly, the Methods&Analysis section will explore the algorithms, train each one of the algorithms and test it on the test set. The results section will test the choosen model (the model with the highest RMSE on the test set) on the validation set and the conclusion part will discuss the results and point to limitations and further study. 
+
+```{r, include = FALSE, message=FALSE}
+  ################################
+# Create edx set, validation set
+################################
+
+set.seed(2020)
+options(digits = 3)
+# Note: this process could take a couple of minutes
+
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
+if(!require(stringr)) install.packages("stringr", repos = "http://cran.us.r-project.org")
+if(!require(recommenderlab)) install.packages("recommenderlab", repos = "http://cran.us.r-project.org")
+if(!require(recosystem)) install.packages("recosystem", repos = "http://cran.us.r-project.org")
+if(!require(tinytex)) install.packages("tinytex", repos = "http://cran.us.r-project.org")
+
+
+options(digits = 4)
+# MovieLens 10M dataset:
+# https://grouplens.org/datasets/movielens/10m/
+# http://files.grouplens.org/datasets/movielens/ml-10m.zip
+
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+
+ratings <- fread(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                 col.names = c("userId", "movieId", "rating", "timestamp"))
+
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+movielens <- left_join(ratings, movies, by = "movieId")
+
+# Validation set will be 10% of MovieLens data
+
+set.seed(1, sample.kind="Rounding")
+# if using R 3.5 or earlier, use `set.seed(1)` instead
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+
+# Make sure userId and movieId in validation set are also in edx set
+
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+
+# Add rows removed from validation set back into edx set
+
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+
+rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+library(stringr)
+library(lubridate)
+
+#### extract the year from the name column, adding a release_year column, creating a review time column,
+#### rounding the review time to a week
+
+edx_tidy <- edx %>% 
+  mutate(release_year = (str_extract(title, "[(]\\d{4}[)]")),
+         release_year = str_replace_all(release_year, "\\(|\\)", ""),
+         title = str_remove(title, "[(]\\d{4}[)]"),
+         review_time = as_datetime(timestamp), 
+         review_time = round_date(review_time, unit = "week",
+                                  week_start = getOption("lubridate.week.start", 7)))
+
+
+#create data partition for train and test set - train set has 90% of the observations
+test_index_1 <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE)
+
+#create train and test sets
+train_set <- edx[-test_index_1,]
+test_set <- edx[test_index_1,]
+
+#making sure there are the same movies and users
+test_set <- test_set %>% 
+  semi_join(train_set, by = "movieId") %>% 
+  semi_join(train_set, by = "userId")
+
+```
+
+
+# Exploring the Data
+
+The first stage is importing and describing the data, splitting it into the validation and edx set and then splitting it into test and train sets. 
+The original data includes the userId, movieID, title, genre, rating and timestamp.
+
+```{r, echo = FALSE}
+head(edx)
+```
+
+Each row represents a rating given by one user to one movie.
+
+The number of users rating and movies rated is as following:
+```{r, echo=FALSE}
+###number of users that rated movies and the number of movies rated
+edx_tidy %>% 
+  summarize(number_of_users_rating = n_distinct(userId),
+            number_of_movies_rated = n_distinct(movieId))
+```
+
+I have extracted the year of each movie from the title and coerced the timestamp into date for possible further analysis. The data includes the genre of the movie rated:
+
+```{r, echo = FALSE}
+### Geners
+edx_tidy %>% 
+ group_by(genres) %>% 
+  summarize(n = n()) %>% 
+  head()
+
+```
+
+The following table is a sample of 100 movies and 100 users.
+
+
+```{r, echo=FALSE, fig.cap= "Sample of 100 users and movies", fig.height=5, fig.width=6.5}
+users <- sample(unique(edx_tidy$userId), 100)
+edx_tidy %>% 
+  filter(userId %in% users) %>% 
+  select(userId, movieId, rating) %>%
+  mutate(rating = 1) %>%
+  spread(movieId, rating) %>% select(sample(ncol(.), 100)) %>% 
+  as.matrix() %>% t(.) %>%
+  image(1:100, 1:100,. , xlab="Movies", ylab="Users")
+abline(h=0:100+0.5, v=0:100+0.5, col = "grey")
+```
+
+
+The challenge of movie rating algorithms can therefore be seen as filling up the NA's (white cells) in this table.
+
+
+Further expolration of the data shows that some movies are rated more than others and that some users are rating more than others. 
+
+```{r, echo=FALSE,fig.cap = "Number of rating by movie"}
+#### Some movies are reated more than others
+edx_tidy %>% 
+  dplyr::count(movieId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black") + 
+  scale_x_log10() + 
+  ggtitle("Movies")
+
+```
+
+
+```{r, echo=FALSE, fig.cap="Number of rating by user"}
+### Some users are rating more than others
+edx_tidy %>% 
+  dplyr::count(userId) %>% 
+  ggplot(aes(n)) + 
+  geom_histogram(bins = 30, color = "black") + 
+  scale_x_log10() +
+  ggtitle("Users")
+
+```
+
+
+in addition, examining the time reviewed shows that there is a large variance in the number of ratings per week:
+
+```{r, echo=FALSE, fig.cap="Number of ratings per week"}
+
+## date reviewed on a scale y_log_10
+edx_tidy %>% 
+  group_by(review_time) %>% 
+  summarise(n = n()) %>% 
+  ggplot(aes(review_time, n)) +
+  geom_point(aes(review_time, n)) +
+  scale_y_log10() +
+  ggtitle("Review Time")
+
+```
+
+
+# Methods/Analysis
+
+In this section I will explore several machine learning algorithms and implement them on the train and test set. 
+
+## Evaluating the Results
+
+In order to evaluate the different algorithms, three evaluation metrics were used. The different evaluation metrics were calculated first on the test set and then, in the final results section, on the validation set.
+
+1. Root Mean Square Error (RMSE):
+$$RMSE = \sqrt{\frac{\sum \left ( r_{i,j} - \hat{r}_{i,j}\right )^{2}}{N}}$$
+2. Mean Average Error:
+$$MAE = \sum \left ( \left | r_{i,j} - \hat{r}_{i,j} \right | \right )$$
+3. Mean Square Error:
+
+$$MSE = \frac{1}{n}\sum\left (r_{i, j} - \hat{r}_{i,j}  \right )^{2}$$
+
+```{r, include = FALSE, message=FALSE}
+#The RMSE function
+
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings) ^ 2))
+}
+
+MSE <- function(true_ratings, predicted_ratings){
+  mean((true_ratings - predicted_ratings) ^ 2)
+}
+
+MAE <- function(true_ratings, predicted_ratings){
+  mean(abs(true_ratings - predicted_ratings))
+}
+```
+
+
+## Naive Mean Linear Model
+The first and most simple algorithm is to create a linear model based only on the average rating of users. 
+$$Y_{u,i} = \mu +\varepsilon _{i,j}$$
+This model assumes that all users give the same rating to any movie and therfore is not very concise with reality. The result is a linear line indicating the similar prediction made for every user and movie. Due to a large loss of information the model's prediction power is not very high.
+
+The prediction on the test set is:
+```{r, echo = FALSE}
+#naive model based on avearage from the book
+
+mu_hat_average <- mean(train_set$rating)
+tibble(mu_hat_average = mu_hat_average)
+
+```
+
+And the evaluation metrics are:
+
+```{r, echo = FALSE}
+#building a rmse results table
+evaluation_results <- tibble(method = "Simple average", RMSE = RMSE(test_set$rating, mu_hat_average),
+                             MSE = MSE(test_set$rating, mu_hat_average), 
+                             MAE = MAE(test_set$rating, mu_hat_average))
+
+
+evaluation_results
+```
+
+## Movie Effect
+
+A probable assumption is that the movie rated has some effect on the rating. Some movies are rated higher than other movies. Therefore, adding the term $b_{i}$ to represent the movie effect to the equation:
+
+$$Y_{u,i} = \mu + b_{i}+\varepsilon _{i,j}$$
+The added movie effect explains some of the variation between the users and the evaluation metrics have improved over the naive model.
+```{r, echo = FALSE}
+
+movie_effect <- train_set %>% 
+  group_by(movieId) %>% 
+  summarize(b_i = mean(rating - mu_hat_average))
+
+#modeling and predicting the movie effect
+
+predicted_ratings <- mu_hat_average + test_set %>% 
+  left_join(movie_effect, by = "movieId") %>% 
+  pull(b_i)
+
+
+### adding movie effect to evaluation table
+evaluation_results <- bind_rows(evaluation_results, tibble(method = "Movie Effect", 
+                                                           RMSE = RMSE(test_set$rating, predicted_ratings),
+                                                           MSE = MSE(test_set$rating, predicted_ratings),
+                                                           MAE = MAE(test_set$rating, predicted_ratings)))
+
+
+evaluation_results
+
+```
+
+
+
+```{r, echo=FALSE, fig.cap="Variation of movie effect"}
+
+###plotting the movie effect
+movie_effect %>%
+  qplot(b_i, geom ="histogram", bins = 10, data = ., color = I("black"))
+
+
+
+```
+
+The graph clearly shows variation in the ratings given to different movies.
+
+## Combined Movie & User Effect
+
+In addition to movie effect, different users tend to rate differently. 
+One can see that users tend to have different scales for rating movies.
+
+```{r, echo=FALSE, "User effect", }
+
+### plotting the user effect on the entire edx set
+edx_tidy %>% 
+  group_by(userId) %>%
+  summarize(b_u = mean(rating)) %>%
+  filter(n()>=100) %>%
+  ggplot(aes(b_u)) +
+  geom_histogram(bins = 30, color = "black")
+
+```
+
+Adding the user effect $b_{u}$ to the equation - 
+$$Y_{u,i} = \mu + b_{i}+ b_{u} +\varepsilon _{i,j}$$
+The evaluation metrics for the combined effect have certainly improved over the naive case:
+
+```{r, echo=FALSE}
+#adding the user effect
+  
+user_effect <- train_set %>% 
+  left_join(movie_effect, by = "movieId") %>% 
+  group_by(userId) %>% 
+  summarize(b_u = mean(rating - mu_hat_average - b_i))
+
+#modeling and predicting the user effect
+
+predicted_ratings <- test_set %>% 
+  left_join(movie_effect, by = "movieId") %>% 
+  left_join(user_effect, by = "userId") %>% 
+  mutate(pred = mu_hat_average + b_i + b_u) %>% 
+  pull(pred)
+
+### adding user effect to evaluation table
+evaluation_results <- bind_rows(evaluation_results,
+                          tibble(method = "Movie&User effect", 
+                                 RMSE = RMSE(test_set$rating, predicted_ratings),
+                                 MSE = MSE(test_set$rating, predicted_ratings),
+                                 MAE = MAE(test_set$rating, predicted_ratings)))
+evaluation_results
+
+```
+
+Once again, adding to the equation more information that can explain varaince improves the power of prediction.
+
+## Regularized Movie & User Effect
+
+The main idea behind regularization is to constrain the variablilty of the effect sizes. Since extreme, far from the mean values, tend to have a large effect on the result, weighting the effects with some penalty depending on the size can improve accuracy. Taking into account penalty parameter $\lambda$  for both the user and the movie effect, the equation will be in the following form:
+$$Y_{i} = \frac{1}{N}\sum_{u,i}\left ( y_{u,i} - \mu - b_{i} - b_{u} \right )^{2} + \lambda \left ( \sum_{i}b_{i}^{2} + \sum_{u}b_{u}^{2}\right )$$
+The lambda which minimizes the RMSE is:
+
+```{r, echo = FALSE}
+#regularizing for small n's of users bias and movie bias
+
+#defining parameter lambda
+lambdas <- seq(0, 10, 0.25)
+
+regularized_function <- function(l){
+  mu <- mean(train_set$rating)
+  
+  b_i <- train_set %>% 
+    group_by(movieId) %>% 
+    summarize(b_i = sum(rating - mu) / (n() + l))
+  
+  b_u <- train_set %>%
+    left_join(b_i, by ="movieId") %>% 
+    group_by(userId) %>% 
+    summarize(b_u = sum(rating - b_i - mu) / (n() + l))
+  
+    predicted_ratings <- train_set %>% 
+    left_join(b_i, by = "movieId") %>% 
+    left_join(b_u, by = "userId") %>% 
+    mutate(pred = mu + b_i + b_u) %>% 
+    pull(pred)
+  
+  tibble(RMSE = RMSE(predicted_ratings,train_set$rating),
+         MSE = MSE(predicted_ratings, train_set$rating),
+         MAE = MAE(predicted_ratings,train_set$rating))
+  
+  
+}
+
+rmses <- sapply(lambdas, regularized_function)
+
+#the optimal lambda is  
+lambda <- lambdas[which.min(rmses)]
+
+
+#### creating a regularization function for the test set
+
+
+regularized_function_test_set <- function(l){
+  mu <- mean(train_set$rating)
+  
+  b_i <- train_set %>% 
+    group_by(movieId) %>% 
+    summarize(b_i = sum(rating - mu) / (n() + l))
+  
+  b_u <- train_set %>%
+    left_join(b_i, by ="movieId") %>% 
+    group_by(userId) %>% 
+    summarize(b_u = sum(rating - b_i - mu) / (n() + l))
+  
+  predicted_ratings <- test_set %>% 
+    left_join(b_i, by = "movieId") %>% 
+    left_join(b_u, by = "userId") %>% 
+    mutate(pred = mu + b_i + b_u) %>% 
+    pull(pred)
+  
+  tibble(RMSE = RMSE(predicted_ratings,test_set$rating),
+         MSE = MSE(predicted_ratings, test_set$rating),
+         MAE = MAE(predicted_ratings,test_set$rating))
+  
+  
+}
+
+tibble(lambda = lambda)
+
+```
+
+And the RMSE has improved in comparsion to the previous models. Note that the lambda was optimized using the train set - meaning, the lambda that minimized the RMSE on the train set was used and the results shown are from applying the lambda on the test set.
+
+```{r, echo=FALSE}
+#updating rmse results
+### noting that since the target was to minimize the RMSE, the MAE and MSE are just descriptive
+
+evaluation_results <- bind_rows(evaluation_results, 
+                          tibble(method = "Regularized Movie and User effects", 
+                          RMSE = regularized_function(lambda)$RMSE, 
+                          MSE = regularized_function(lambda)$MSE,
+                          MAE = regularized_function(lambda)$MAE))
+
+evaluation_results
+```
+Since minimizing RMSE is the main goal of this project, the MSE and MAE are the reported values for the minmum RMSE and were not minimized. 
+
+
+## Matrix Factorization
+
+The main idea behind Matrix Factorization is to find correlated users and to predict NA's based on a weighted average of the known predictors. Matrix Factoriztion displays the entire user-movie matrix as the product of two smaller dimensions matrices. 
+In order to perform Matrix Facorization, we will examine the residual: 
+$$r_{u,i} = y_{u,i} - \hat{b}_{i} - \hat{b}_{u}$$
+
+We can then represent the residual as the following[^1]: 
+$$r_{u,i} \approx p_{u} q_{i}  $$
+Thus, we can approximate the entire rating matrix $R_{m X n}$ as the product of two lower dimension matrices $P_{k X m}$ and $Q_{k X N}$ such that 
+$$R \approx P{}'Q$$
+Let $p_{u}$ be the u-th column of p, and $q_{v}$ be the v-th column of Q, then the rating given by user u on item v would be predicted as $p_{u}{}'q_{v}$[^2].
+
+
+###  Recommenderlab
+Originally, I have constructed a matrix factorization algorithm using the library  [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/vignettes/recommenderlab.pdf), yet the processing time using recommenderlab was very long (over 6h for each iteration on a dual-core 16GB laptop). Although the results would not be presented in this essay, the model building and the methods would be discussed briefly and the code written would be added as a separate coding file (not to be graded or tested).
+
+The function Recommender in recommenderlab takes an object of ratingMatrix and computes a prediction of the missing values. The function recommender includes a few recommendation methods that were studied. The recommendation methods applied were UBCF - "Recommender based on user-based collaborative filtering" and IBCF - "Recommender based on item-based collaborative filtering".
+
+Collaborative filtering refers to the idea that users collaborate with each other to recommend items. Algorithms take into account user purchases and preferences and recommend based on that information[^3].
+Item Based Collaborative Filtering (IBCF) algorithm identifies which items are simliar in terms of having been purchased by the same people and recommends to a new user the items that are  similar to that purchase. A disadvantage with this algorithm is  that new movies, or unrated movies have no predictors and therefore are avoided and not recommended by the algorithm. 
+
+User Based Collaborative Filtering (UBCF) algorithm works quite the same as the IBCF yet with users instead of items. First the algorithm identifies similar users and then the algorithm recommends the top-rated items purchased by similar users. A disadvantage with this algorithm is caused by users who have not rated any movies leading to bias and therefore algorithm does not find an optimal recommendation. 
+Both the algorithms used were implemented and set to their default cosine similiarity. 
+
+
+### Recosystem
+The use of the library [recosystem](https://cran.r-project.org/web/packages/recosystem/index.html)
+improved the processing time significantly while providing satisfying results.
+The library's vignettes[^2] explains that the recoystem makes use of LIMBF which is a high perfomance library in C++ for large scale Matrix Factorization. 
+
+A typcial solution for $P$ and $Q$ (as explained in the introuctory section of the Matrix Factorization) is given by the following optimization problem:
+
+$$\min_{P,Q}\sum_{(u,v) \in R}\left [ f(p_{u},q_{v}; r_{u,v}) + \mu P \left \| p_u \right \|_1 + \mu Q \left \| q_v \right \|_1 + \frac{\lambda_p}{2}\left \| p_u \right \|_{2}^{2} +\frac{\lambda_q}{2}\left \| q_v \right \|_{2}^{2} \right ]$$
+where $(u,v)$ are locations of the observed entries in $R$, $r_{(u,v)}$ is the observed rating, $f$ is a loss function and $\mu_p, \mu_q, \lambda_p  \ and \ \lambda_q$ are penalty parameters to avoid overfitting. Recosystem provides comfortable functions to solve this optimization problem.
+
+The train and test sets were coereced to a **data_memory()** object, the recosystem input. 
+
+```{r, echo = FALSE}
+### creating a matrix of users and movies
+
+#### data memory specifies a data set from r objects
+y_train <- with(train_set, data_memory(user_index = userId, item_index = movieId, rating = rating))
+y_test <- with(test_set,  data_memory(user_index = userId, item_index = movieId, rating = rating))
+
+```
+
+The function **Reco()** creates an object of class "RecoSys" which is used for constructing the recommender model and conducting the prediction. The tune function uses cross validation to tune the model parameters and is used as desribed in the vignette. The algorithm is then trained and a prediction is made on the test set.
+
+```{r, include = FALSE, message=FALSE}
+### create a recosystem object
+
+recomm_recosystem <- Reco()
+
+### tuning the cross validation parameters (optinal part)
+
+opts <- recomm_recosystem$tune(y_train, opts = list(dim = c(10, 20, 30), lrate = c(0.1, 0.2),
+                              costp_l1 = 0, costq_l1 = 0,
+                              nthread = 1, niter = 10))
+
+#### training the algorithm
+
+recomm_recosystem$train(y_train, opts = c(opts$min, nthread = 1, niter = 20))
+
+### prediction the over the test set
+predict_recosystem <- recomm_recosystem$predict(y_test, out_memory())
+
+
+
+```
+
+The first 20 ratings predicted:
+```{r, echo = FALSE}
+### the first 20 predicted 
+tibble(prediction = head(predict_recosystem, 20), "test set rating" = head(test_set$rating, 20))
+
+```
+
+And the RMSE is:
+
+```{r, echo = FALSE}
+evaluation_results <- bind_rows(evaluation_results, 
+                          tibble(method = "Matrix Factorization using recosystem", 
+                          RMSE = RMSE(predict_recosystem, test_set$rating),
+                          MSE = MSE(predict_recosystem, test_set$rating),
+                          MAE = MAE(predict_recosystem, test_set$rating)))
+
+evaluation_results
+
+```
+
+The RMSE has improved over the other methods and therefore is used to test over the validation set.
+
+
+# Results
+The results section will apply the final model - Matrix factorization using recosystem the to validation set. The RMSE obtained using the recosystem on the validation set is:
+
+```{r, echo = FALSE}
+
+y_validation <- with(validation, data_memory(user_index = userId, item_index = movieId, rating = rating))
+
+validation_predict <- recomm_recosystem$predict(y_validation, out_memory())
+
+validation_result <- tibble(RMSE = RMSE(validation_predict, validation$rating), MSE =  MSE(validation_predict, validation$rating), MAE = MAE(validation_predict, validation$rating))
+
+validation_result
+
+```
+
+
+# Conclusion 
+
+In this project, A movie rating recommendation system was constructed using several models. First, a naive model was constructed, using only the mean as predictor. To this model, user effect, movie effect and a regularized user and movie effect were added, providing an unsatisfying RMSE. Since I have followed the course material and I've reached the necassary RMSE by using Matrix Factorization, I have not implemented other possibilities such as adding the day reviewed and genre effect to the regularized model shown in the Regularized Movie & User Effect section, despite hinting at some more variation explained by these two variables. I assumed that such a model would provide better RMSE than the linear model, but not as good as the Matrix Factorization and therefore I have not implemented it.  
+A seperate model was constructed using matrix factorization and the R package recosystem. With a faster pc I would have tried comparing the results obtained by another package - recommenderlab and it's different possibilities. The final RMSE obtained for the movie recommendation algorithm is:
+
+```{r, echo = FALSE}
+tibble(RMSE = validation_result$RMSE)
+```
+
+
+
+[^1]: Rafael A. Irizarry, "Introduction to Data Science", p. 666
+[^2]: Yixuan Qiu, Chih-Jen Lin, Yu-Chin Juan, Wei-Sheng Chin, Yong Zhuang, Bo-Wen Yuan, Meng-Yuan Yang, and other contributors (2017). recosystem: Recommender System using Matrix Factorization.
+[^3]: Shuresh K. Goralka and Michele Usuelli Building a Recommendation System with R", p. 53
+
+# Bibliography
+
+
+Goralka, Shuresh K. and Usuelli Michele (2015). "Building a Recommendation System with R". Packt Publishing. 
+
+Irizarry Rafael A. (2019) "Introduction to Data Science". 
+
+[Michael Hahsler (2019). recommenderlab: Lab for Developing and Testing Recommender Algorithms. R package version 0.2-5.](https://github.com/mhahsler/recommenderlab)
+
+
+[Yixuan Qiu, Chih-Jen Lin, Yu-Chin Juan, Wei-Sheng Chin, Yong Zhuang, Bo-Wen Yuan, Meng-Yuan Yang, and other contributors (2017). recosystem: Recommender System using Matrix Factorization.](https://cran.r-project.org/web/packages/recosystem/index.html) 
+
