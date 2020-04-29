@@ -28,7 +28,7 @@ The movielens data is a large dataset which includes rating data of movies and u
 
 In order to achieve the target RMSE a few strategies and approaches were considered and some of them implemented - Naive Mean Linear Model, Movie Effect, User Effect, Regularized Movie&User Effect and Matrix Factorization using recosystem. Matrix Factorization with recommendlab was also implemented but is not included in this final report due to very long processing time.
 
-The first section will explore the data briefly, the Methods&Analysis section will explore the algorithms, train each one of the algorithms and test it on the test set. The results section will test the choosen model (the model with the highest RMSE on the test set) on the validation set and the conclusion part will discuss the results and point to limitations and further study. 
+The first section will briefly explore the data; the Methods&Analysis section will study the algorithms, train each one of the algorithms and test them on the test set. The results section will test the chosen algorithm (the model with the highest RMSE on the test set) on the validation set and the conclusion part will discuss the results and point to limitations and further study. 
 
 ```{r, include = FALSE, message=FALSE}
   ################################
@@ -121,7 +121,7 @@ test_set <- test_set %>%
 
 # Exploring the Data
 
-The first stage is importing and describing the data, splitting it into the validation and edx set and then splitting it into test and train sets. 
+The first stage consists in importing and describing the data, splitting it into the validation and edx set and then splitting it into test and train sets. 
 The original data includes the userId, movieID, title, genre, rating and timestamp.
 
 ```{r, echo = FALSE}
@@ -138,7 +138,7 @@ edx_tidy %>%
             number_of_movies_rated = n_distinct(movieId))
 ```
 
-I have extracted the year of each movie from the title and coerced the timestamp into date for possible further analysis. The data includes the genre of the movie rated:
+I extracted the year of each movie from the title and coerced the timestamp into date for possible further analysis. The data includes the genre of the movie rated:
 
 ```{r, echo = FALSE}
 ### Geners
@@ -149,6 +149,7 @@ edx_tidy %>%
 
 ```
 
+******
 The following table is a sample of 100 movies and 100 users.
 
 
@@ -167,8 +168,7 @@ abline(h=0:100+0.5, v=0:100+0.5, col = "grey")
 
 The challenge of movie rating algorithms can therefore be seen as filling up the NA's (white cells) in this table.
 
-
-Further expolration of the data shows that some movies are rated more than others and that some users are rating more than others. 
+Further exploration of the data shows that some movies are rated more than others and that some users are rating more than others. 
 
 ```{r, echo=FALSE,fig.cap = "Number of rating by movie"}
 #### Some movies are reated more than others
@@ -180,6 +180,7 @@ edx_tidy %>%
   ggtitle("Movies")
 
 ```
+
 
 
 ```{r, echo=FALSE, fig.cap="Number of rating by user"}
@@ -194,7 +195,7 @@ edx_tidy %>%
 ```
 
 
-in addition, examining the time reviewed shows that there is a large variance in the number of ratings per week:
+In addition, examining the time reviewed shows that there is a large variance in the number of ratings per week:
 
 ```{r, echo=FALSE, fig.cap="Number of ratings per week"}
 
@@ -244,9 +245,9 @@ MAE <- function(true_ratings, predicted_ratings){
 
 
 ## Naive Mean Linear Model
-The first and most simple algorithm is to create a linear model based only on the average rating of users. 
+The first and most simple algorithm consists in creating a linear model based only on the average rating of users. 
 $$Y_{u,i} = \mu +\varepsilon _{i,j}$$
-This model assumes that all users give the same rating to any movie and therfore is not very concise with reality. The result is a linear line indicating the similar prediction made for every user and movie. Due to a large loss of information the model's prediction power is not very high.
+This model assumes that all users give the same rating to any movie and therefore it is not very concise with reality. The result is a linear line indicating the similar prediction made for every user and movie. Due to a large loss of information the model's prediction power is not very high.
 
 The prediction on the test set is:
 ```{r, echo = FALSE}
@@ -360,7 +361,7 @@ evaluation_results
 
 ```
 
-Once again, adding to the equation more information that can explain varaince improves the power of prediction.
+Once again, adding to the equation more information that can explain variance improves the power of prediction.
 
 ## Regularized Movie & User Effect
 
@@ -468,21 +469,21 @@ Let $p_{u}$ be the u-th column of p, and $q_{v}$ be the v-th column of Q, then t
 
 
 ###  Recommenderlab
-Originally, I have constructed a matrix factorization algorithm using the library  [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/vignettes/recommenderlab.pdf), yet the processing time using recommenderlab was very long (over 6h for each iteration on a dual-core 16GB laptop). Although the results would not be presented in this essay, the model building and the methods would be discussed briefly and the code written would be added as a separate coding file (not to be graded or tested).
+Originally, I constructed a matrix factorization algorithm using the library  [recommenderlab](https://cran.r-project.org/web/packages/recommenderlab/vignettes/recommenderlab.pdf), yet the processing time using recommenderlab was very long (over 6h for each iteration on a dual-core 16GB laptop). Although the results would not be presented in this essay, the model building and the methods will be discussed briefly and the code written will be added as a separate coding file in my [git repository] (https://github.com/AmiDavid/Movie_rating_algorithm) (not to be graded or tested).
 
 The function Recommender in recommenderlab takes an object of ratingMatrix and computes a prediction of the missing values. The function recommender includes a few recommendation methods that were studied. The recommendation methods applied were UBCF - "Recommender based on user-based collaborative filtering" and IBCF - "Recommender based on item-based collaborative filtering".
 
 Collaborative filtering refers to the idea that users collaborate with each other to recommend items. Algorithms take into account user purchases and preferences and recommend based on that information[^3].
-Item Based Collaborative Filtering (IBCF) algorithm identifies which items are simliar in terms of having been purchased by the same people and recommends to a new user the items that are  similar to that purchase. A disadvantage with this algorithm is  that new movies, or unrated movies have no predictors and therefore are avoided and not recommended by the algorithm. 
+Item Based Collaborative Filtering (IBCF) algorithm identifies which items are similar in terms of having been purchased by the same people and recommends to a new user the items that are  similar to that purchase. A disadvantage with this algorithm is that new movies or unrated movies have no predictors and therefore are avoided and not recommended by the algorithm. 
 
-User Based Collaborative Filtering (UBCF) algorithm works quite the same as the IBCF yet with users instead of items. First the algorithm identifies similar users and then the algorithm recommends the top-rated items purchased by similar users. A disadvantage with this algorithm is caused by users who have not rated any movies leading to bias and therefore algorithm does not find an optimal recommendation. 
+User Based Collaborative Filtering (UBCF) algorithm works quite the same as the IBCF yet with users instead of items. First, the algorithm identifies similar users and then the algorithm recommends the top-rated items purchased by similar users. A disadvantage with this algorithm is caused by users who have not rated any movies leading to bias and therefore the algorithm does not find an optimal recommendation. 
 Both the algorithms used were implemented and set to their default cosine similiarity. 
 
 
 ### Recosystem
 The use of the library [recosystem](https://cran.r-project.org/web/packages/recosystem/index.html)
 improved the processing time significantly while providing satisfying results.
-The library's vignettes[^2] explains that the recoystem makes use of LIMBF which is a high perfomance library in C++ for large scale Matrix Factorization. 
+The library's vignette[^2] explains that the recoystem makes use of LIMBF which is a high perfomance library in C++ for large scale Matrix Factorization. 
 
 A typcial solution for $P$ and $Q$ (as explained in the introuctory section of the Matrix Factorization) is given by the following optimization problem:
 
@@ -565,8 +566,8 @@ validation_result
 
 # Conclusion 
 
-In this project, A movie rating recommendation system was constructed using several models. First, a naive model was constructed, using only the mean as predictor. To this model, user effect, movie effect and a regularized user and movie effect were added, providing an unsatisfying RMSE. Since I have followed the course material and I've reached the necassary RMSE by using Matrix Factorization, I have not implemented other possibilities such as adding the day reviewed and genre effect to the regularized model shown in the Regularized Movie & User Effect section, despite hinting at some more variation explained by these two variables. I assumed that such a model would provide better RMSE than the linear model, but not as good as the Matrix Factorization and therefore I have not implemented it.  
-A seperate model was constructed using matrix factorization and the R package recosystem. With a faster pc I would have tried comparing the results obtained by another package - recommenderlab and it's different possibilities. The final RMSE obtained for the movie recommendation algorithm is:
+In this project, a movie rating recommendation system was constructed using several models. First, a naive model was constructed, using only the mean as predictor. To this model, user effect, movie effect and a regularized user and movie effect were added, providing an unsatisfying RMSE. Since I followed the course material and I reached the necessary RMSE by using Matrix Factorization, I did not implement other possibilities such as adding the day reviewed and genre effect to the regularized model shown in the Regularized Movie & User Effect section, despite hinting at some more variation explained by these two variables. I assumed that such a model would provide better RMSE than the linear model, but not as good as the Matrix Factorization and therefore I did not implement it.  
+A seperate model was constructed using matrix factorization and the R package recosystem. With a faster pc I would have tried comparing the results obtained by another package - recommenderlab and its different possibilities. The final RMSE obtained for the movie recommendation algorithm is:
 
 ```{r, echo = FALSE}
 tibble(RMSE = validation_result$RMSE)
